@@ -5,7 +5,7 @@ Scope: the deployed ZeroGuard web service. Assets: protected resources, policy d
 | # | Threat | Mitigation in this project | Remaining gap |
 |---|---|---|---|
 | 1 | Client claims a higher role, MFA or device status | Role, MFA and device posture are read from the server database; request bodies and extra headers are ignored (tested) | None for these fields |
-| 2 | Impersonating a user | **Not mitigated**: identity is the `X-User-Id` header | Replace with OIDC and signed tokens; validate issuer, audience, expiry |
+| 2 | Impersonating a user | Password (scrypt) plus signed 30-minute tokens; `none`/other algorithms and bad signatures rejected; 5-failure lockout; MFA proven per session by TOTP (tested) | Shared demo password, in-memory lockout, token in sessionStorage; no external IdP |
 | 3 | Using someone else's device ID | A device must belong to the requesting user, otherwise it counts as non-compliant (tested) | Posture is simulated; real use needs endpoint attestation |
 | 4 | Privilege escalation to admin pages | Admin role check plus a shared `ADMIN_KEY` when deployed; failed attempts are logged | One shared key, no per-admin accounts |
 | 5 | Policy engine unavailable or returns junk | Fail closed: any error or invalid effect becomes DENY (tested) | No alert on repeated engine failures |
