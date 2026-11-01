@@ -4,7 +4,7 @@ ZeroGuard decides whether a user may access a resource using **identity status, 
 
 > Portfolio prototype, not a production-certified system. Device posture is **simulated**, and identity is a **demo header** (see [Known limitations](#known-limitations)).
 
-**Live demo:** `https://zeroguard-8o7k.onrender.com/` (free tier: first load after idle takes ~1 minute; data resets on restart) · **Demo walkthrough:** [docs/demo-script.md](docs/demo-script.md) · **Threat model:** [docs/threat-model.md](docs/threat-model.md)
+**Live demo:** `<your-render-url>` (free tier: first load after idle takes ~1 minute; data resets on restart) · **Demo walkthrough:** [docs/demo-script.md](docs/demo-script.md) · **Threat model:** [docs/threat-model.md](docs/threat-model.md)
 
 ## What it demonstrates
 - **Policy as code:** rules live in `policies/` (Rego + data), separate from application code, with 10 Rego unit tests.
@@ -53,13 +53,14 @@ Seed users: `aman` (developer), `priya` (HR), `root` (admin, non-compliant devic
 |---|---|---|
 | POST | `/access-request?resource=…` | Evaluate and log a decision |
 | GET | `/resources/{name}` | Protected resource (PEP) |
-| GET | `/audit`, `/audit/verify`, `/stats`, `/policies` | Admin only (admin role + `ADMIN_KEY` when deployed) |
+| GET | `/audit`, `/audit/verify`, `/stats`, `/policies` | Admin only (signed token with the admin role) |
+| POST | `/auth/login`, `/auth/step-up`, `/simulate` (admin) | Sign in, upgrade MFA, evaluate as another user |
 | GET | `/health`, `/health/policy` | Liveness and policy-engine reachability |
 
-Interactive docs at `/docs`. The `X-User-Id` / `X-Device-Id` headers stand in for a verified session.
+Interactive docs at `/docs`. Identity comes from a signed bearer token (`POST /auth/login`, `/auth/step-up`); `X-Device-Id` is the simulated device. `AUTH_MODE=header` (tests only) accepts `X-User-Id` instead.
 
 ## Run it
-**Deploy (Docker, Render):** push the repo, create a Render Blueprint from `render.yaml`, copy `ADMIN_KEY` from the service environment into the dashboard. The build log runs the backend tests and Rego tests.
+**Deploy (Docker, Render):** push the repo, create a Render Blueprint from `render.yaml`, Render creates a free PostgreSQL database and links it through `DATABASE_URL`. Copy `DEMO_PASSWORD` from the service environment and sign in as `root`. The build log runs the backend tests and Rego tests.
 
 **Locally (no Docker):**
 ```
@@ -70,16 +71,16 @@ opa test policies policies/tests -v                 # optional: Rego tests
 ```
 
 ## Testing
-- 21 backend tests (pytest): every policy outcome, enforcement, admin protection, tamper detection, OPA failure modes.
+- 34 backend tests (pytest, also run against PostgreSQL): every policy outcome, enforcement, admin protection, tamper detection, OPA failure modes.
 - 10 Rego tests (`opa test`): precedence, default deny, invalid input, disabled policies.
 - Both run automatically in the Docker build and passed on Render.
 
 ## Known limitations
-- **Identity is a demo header**, not authentication. Next step: OIDC (Keycloak or a hosted provider) with signed tokens.
+- **Login is built in (scrypt passwords, TOTP MFA, signed 30-minute tokens), not an enterprise identity provider.** All seeded demo users share one password, and `DEMO_MODE` shows MFA codes on the login page. Next step: OIDC (Keycloak or a hosted provider).
 - **Device posture is simulated** (seeded flags), not from endpoint management.
-- **SQLite on a free instance resets on restart.** Next step: PostgreSQL.
+- **Database:** PostgreSQL when `DATABASE_URL` is set (Render), SQLite otherwise (local, tests). The schema is created at startup; there are no Alembic migrations yet. Login lockout counters are in memory (reset on restart, not shared between instances).
 - No sessions or revocation, risk scoring, rate limiting, or policy editing from the UI yet.
 - The audit hash chain detects edits but does not stop someone with full database write access from rebuilding it.
 
 ## Roadmap
-PostgreSQL + migrations → OIDC login → sessions and revocation → risk signals → policy versioning UI → rate limiting.
+Alembic migrations → OIDC login → sessions and revocation → risk signals → policy versioning UI → rate limiting.
