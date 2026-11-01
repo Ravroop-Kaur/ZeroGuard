@@ -34,3 +34,5 @@ td{padding:10px;border-top:1px solid var(--bd)}tbody tr{cursor:pointer}tbody tr:
 dl{display:grid;grid-template-columns:110px 1fr;gap:8px 10px}dt{color:var(--mut)}dd{margin:0;word-break:break-word}
 @media(max-width:820px){.app{grid-template-columns:1fr}aside{position:static;height:auto;display:flex;gap:6px;flex-wrap:wrap;padding:10px}.brand,.note{display:none}.side-btn{width:auto}main{padding:16px}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+.login{min-height:100vh;display:grid;place-items:center;padding:16px;background:linear-gradient(135deg,#0f172a,#1e1b4b)}.login .card{width:min(440px,100%)}
+.login label{display:block;margin:12px 0 4px;color:var(--mut);font-size:13px}.login input{width:100%}

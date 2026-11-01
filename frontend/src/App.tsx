@@ -1,6 +1,6 @@
 import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { api, session, AccessResult, AuditRow, Decision, Policy, Stats } from "./api";
+import { api, getToken, login, setToken, stepUp, AccessResult, AuditRow, Decision, Me, Policy, Stats } from "./api";
 
 const COLOR: Record<Decision, string> = { ALLOW: "#16a34a", DENY: "#dc2626", STEP_UP_AUTHENTICATION: "#d97706" };
 const LABEL: Record<Decision, string> = { ALLOW: "Allowed", DENY: "Denied", STEP_UP_AUTHENTICATION: "Step-up" };
@@ -33,24 +33,33 @@ const Empty = ({ icon, text, children }: { icon: string; text: string; children?
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("Overview");
-  const [user, setUser] = useState("root"); const [key, setKey] = useState("");
+  const [me, setMe] = useState<Me | null>(null); const [booting, setBooting] = useState(!!getToken());
   const [stats, setStats] = useState<Stats | null>(null); const [rows, setRows] = useState<AuditRow[]>([]);
   const [pols, setPols] = useState<Policy[]>([]); const [intact, setIntact] = useState<boolean | null>(null);
   const [err, setErr] = useState(""); const [loading, setLoading] = useState(false); const [auto, setAuto] = useState(false);
-  const [sel, setSel] = useState<AuditRow | null>(null);
+  const [sel, setSel] = useState<AuditRow | null>(null); const [otp, setOtp] = useState(""); const [mfaMsg, setMfaMsg] = useState("");
+  const isAdmin = me?.role === "admin";
 
+  const signOut = useCallback(() => { setToken(""); setMe(null); setStats(null); setRows([]); setPols([]); setIntact(null); setErr(""); }, []);
+  useEffect(() => { if (!getToken()) { setBooting(false); return; } api<Me>("/auth/me").then(setMe).catch(signOut).finally(() => setBooting(false)); }, [signOut]);
   const load = useCallback(async () => {
-    session.user = user; session.key = key; setErr(""); setLoading(true);
+    if (!isAdmin) return;
+    setErr(""); setLoading(true);
     try {
       const [s, a, p, v] = await Promise.all([api<Stats>("/stats"), api<AuditRow[]>("/audit"), api<Policy[]>("/policies"), api<{ intact: boolean }>("/audit/verify")]);
       setStats(s); setRows(a); setPols(p); setIntact(v.intact);
-    } catch (e) { setErr((e as Error).message); setStats(null); setRows([]); setPols([]); setIntact(null); }
+    } catch (e) { const m = (e as Error).message; if (m.startsWith("401")) signOut(); else setErr(m); }
     finally { setLoading(false); }
-  }, [user, key]);
+  }, [isAdmin, signOut]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { if (!auto) return; const t = setInterval(() => void load(), 10000); return () => clearInterval(t); }, [auto, load]);
+  const verify = async () => {
+    try { const r = await stepUp(otp); setToken(r.token); setMe(r.user); setOtp(""); setMfaMsg(""); }
+    catch (e) { setMfaMsg((e as Error).message.replace(/^\d+: /, "")); }
+  };
 
-  const locked = err.startsWith("403");
+  if (booting) return <div className="card lock"><Empty icon="⏳" text="Loading…" /></div>;
+  if (!me) return <Login onDone={(t, u) => { setToken(t); setMe(u); }} />;
   const denies = stats?.by_decision.DENY ?? 0;
   return (
     <div className="app">
@@ -64,15 +73,19 @@ export default function App() {
         <div className="top">
           <div><h1>{TITLES[tab]}</h1><p className="sub">{SUBS[tab]}</p></div>
           <div className="tools">
-            <label className="sw">Viewing as <select value={user} onChange={(e) => setUser(e.target.value)}><option>root</option><option>aman</option></select></label>
-            <input type="password" placeholder="Admin key" aria-label="Admin key" size={14} onBlur={(e) => setKey(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") setKey(e.currentTarget.value); }} />
-            <label className="sw"><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />Auto-refresh</label>
-            <button className="btn" disabled={loading} onClick={() => void load()}>{loading ? "Loading…" : "Refresh"}</button>
+            <span className="chip" style={{ fontSize: 13, padding: "5px 10px" }}>👤 {me.name} · {me.role}</span>
+            {me.mfa ? <span className="pill ALLOW">MFA verified</span> : <>
+              <span className="pill STEP_UP_AUTHENTICATION">MFA not verified</span>
+              <input placeholder="6-digit code" aria-label="MFA code" size={9} value={otp} onChange={(e) => setOtp(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void verify(); }} />
+              <button className="ghost" onClick={() => void verify()}>Verify</button>{mfaMsg && <span className="m" style={{ color: "var(--no)" }}>{mfaMsg}</span>}</>}
+            {isAdmin && <><label className="sw"><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />Auto-refresh</label>
+              <button className="btn" disabled={loading} onClick={() => void load()}>{loading ? "Loading…" : "Refresh"}</button></>}
+            <button className="ghost" onClick={signOut}>Sign out</button>
           </div>
         </div>
-        {tab === "Simulator" ? <Simulator onDone={() => void load()} /> : locked ? (
-          <div className="card lock"><div className="big" style={{ fontSize: 40 }}>🔒</div><h2>Admin access needed</h2>
-            <p className="m">Choose <b>root</b> in “Viewing as”, paste the <b>ADMIN_KEY</b> (Render → your service → Environment) into the key box and press Enter.</p></div>
+        {tab === "Simulator" ? <Simulator me={me} onDone={() => void load()} /> : !isAdmin ? (
+          <div className="card lock"><div style={{ fontSize: 40 }}>🔒</div><h2>Administrators only</h2>
+            <p className="m">You are signed in as <b>{me.name}</b> ({me.role}). Dashboards, audit log and policies are for admins. Use the Simulator to check your own access.</p></div>
         ) : err ? <div className="card"><Empty icon="⚠️" text={`Could not load data (${err}).`} /></div>
           : !stats ? <div className="card"><Empty icon="⏳" text="Loading…" /></div>
           : tab === "Overview" ? <Overview stats={stats} rows={rows} intact={intact} go={setTab} />
@@ -86,6 +99,34 @@ export default function App() {
           <dt>Policy</dt><dd>{sel.policy_id ?? "default deny"}{sel.policy_version ? ` (v${sel.policy_version})` : ""}</dd><dt>Time (UTC)</dt><dd>{sel.ts.slice(0, 19).replace("T", " ")}</dd></dl></div></>}
     </div>
   );
+}
+
+function Login({ onDone }: { onDone: (token: string, user: Me) => void }) {
+  const [u, setU] = useState("root"); const [p, setP] = useState(""); const [o, setO] = useState("");
+  const [err, setErr] = useState(""); const [busy, setBusy] = useState(false); const [hint, setHint] = useState("");
+  const submit = async () => {
+    setBusy(true); setErr("");
+    try { const r = await login(u.trim(), p, o.trim() || undefined); onDone(r.token, r.user); }
+    catch (e) { setErr((e as Error).message.replace(/^\d+: /, "")); }
+    finally { setBusy(false); }
+  };
+  const demo = async () => {
+    try { const r = await api<{ code: string }>(`/auth/demo-code?username=${encodeURIComponent(u.trim())}`); setHint(`Demo MFA code for ${u}: ${r.code}`); }
+    catch { setHint("No demo code: demo mode is off or this user has no MFA enrolled."); }
+  };
+  return (<div className="login"><form className="card" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+    <div className="brand" style={{ color: "var(--tx)", margin: "0 0 4px" }}><span className="logo">🛡️</span>ZeroGuard</div>
+    <p className="m" style={{ marginTop: 0 }}>Sign in. Every request after this is checked against policy.</p>
+    <label htmlFor="u">Username</label><input id="u" list="demo-users" autoComplete="username" value={u} onChange={(e) => setU(e.target.value)} />
+    <datalist id="demo-users">{["root", "priya", "aman", "ravi", "neha", "sam"].map((x) => <option key={x} value={x} />)}</datalist>
+    <label htmlFor="p">Password</label><input id="p" type="password" autoComplete="current-password" value={p} onChange={(e) => setP(e.target.value)} />
+    <label htmlFor="o">MFA code <span className="m">(optional now; you can verify later)</span></label><input id="o" inputMode="numeric" maxLength={6} value={o} onChange={(e) => setO(e.target.value)} />
+    {err && <p style={{ color: "var(--no)" }}>{err}</p>}
+    <button className="btn" style={{ width: "100%", marginTop: 14 }} disabled={busy || !u || !p}>{busy ? "Signing in…" : "Sign in"}</button>
+    <p className="m" style={{ marginBottom: 0 }}>Demo accounts: root (admin), priya (HR), aman (developer), ravi (intern), neha (HR, no MFA). Password: your <b>DEMO_PASSWORD</b> (Render → Environment).
+      {" "}<button type="button" className="ghost" style={{ padding: "2px 8px" }} onClick={() => void demo()}>Show demo MFA code</button></p>
+    {hint && <p className="m"><b>{hint}</b></p>}
+  </form></div>);
 }
 
 function Overview({ stats, rows, intact, go }: { stats: Stats; rows: AuditRow[]; intact: boolean | null; go: (t: Tab) => void }) {
@@ -137,29 +178,30 @@ function PolicyList({ pols }: { pols: Policy[] }) {
 }
 
 type Run = { u: string; d: string; r: string; t?: string; out?: AccessResult; err?: string };
-function Simulator({ onDone }: { onDone: () => void }) {
+function Simulator({ me, onDone }: { me: Me; onDone: () => void }) {
   const [runs, setRuns] = useState<Run[]>([]); const [busy, setBusy] = useState(false);
-  const [u, setU] = useState("priya"); const [dev, setDev] = useState("d-priya"); const [res, setRes] = useState("hr_db");
-  const run = async (x: Run) => {
+  const [dev, setDev] = useState(`d-${me.id}`); const [res, setRes] = useState("hr_db");
+  const isAdmin = me.role === "admin";
+  const run = async (x: Run, asOther: boolean) => {
     setBusy(true); let out: Run;
-    try { out = { ...x, out: await api<AccessResult>(`/access-request?resource=${encodeURIComponent(x.r)}`, { method: "POST" }, x.u, x.d || undefined) }; }
+    const path = asOther ? `/simulate?user=${encodeURIComponent(x.u)}&resource=${encodeURIComponent(x.r)}` : `/access-request?resource=${encodeURIComponent(x.r)}`;
+    try { out = { ...x, out: await api<AccessResult>(path, { method: "POST" }, x.d || undefined) }; }
     catch (e) { out = { ...x, err: (e as Error).message }; }
-    setRuns((p) => [out, ...p].slice(0, 6)); setBusy(false); onDone();
+    setRuns((p) => [out, ...p].slice(0, 6)); setBusy(false); if (isAdmin) onDone();
   };
   const last = runs[0];
   return (<>
     {last && <div className={`card result ${last.out?.decision ?? ""}`} style={{ marginBottom: 14 }}>
       {last.out ? <><div className="ico" style={{ background: COLOR[last.out.decision] + "22", fontSize: 26 }}>{last.out.decision === "ALLOW" ? "✅" : last.out.decision === "DENY" ? "⛔" : "🔐"}</div>
         <div><div><Pill d={last.out.decision} /> <b>{last.t ?? `${last.u} → ${last.r}`}</b></div><div className="m">{last.out.reason} · policy {last.out.policy_id ?? "default"}{last.out.policy_version ? ` v${last.out.policy_version}` : ""}</div></div></> : <span>{last.err}</span>}</div>}
-    <div className="card" style={{ marginBottom: 14 }}><h2>One-click scenarios <span className="m">(device posture is simulated)</span></h2>
-      <div className="scen">{SCENARIOS.map((s) => <button key={s.t} className="sc" disabled={busy} onClick={() => void run({ u: s.u, d: s.d, r: s.r, t: s.t })}>
-        <b>{s.t}</b><div className="m">{s.u} · {s.d || "no device"} · {s.r}</div><div style={{ marginTop: 8 }}><span className="m">Expect: </span><Pill d={s.e} /></div></button>)}</div></div>
-    <details className="card" style={{ marginBottom: 14 }}><summary style={{ cursor: "pointer", fontWeight: 600 }}>Custom request</summary>
-      <div className="tools" style={{ marginTop: 12 }}>
-        <select value={u} onChange={(e) => setU(e.target.value)}>{["aman", "priya", "root", "ravi", "sam", "neha"].map((x) => <option key={x}>{x}</option>)}</select>
-        <select value={dev} onChange={(e) => setDev(e.target.value)}>{["", "d-aman", "d-priya", "d-root", "d-ravi", "d-neha"].map((x) => <option key={x} value={x}>{x || "(no device)"}</option>)}</select>
-        <select value={res} onChange={(e) => setRes(e.target.value)}>{["hr_db", "source_code", "wiki"].map((x) => <option key={x}>{x}</option>)}</select>
-        <button className="btn" disabled={busy} onClick={() => void run({ u, d: dev, r: res })}>Evaluate</button></div></details>
+    {isAdmin && <div className="card" style={{ marginBottom: 14 }}><h2>Admin scenarios <span className="m">(evaluated as the named user; device posture is simulated)</span></h2>
+      <div className="scen">{SCENARIOS.map((s) => <button key={s.t} className="sc" disabled={busy} onClick={() => void run({ u: s.u, d: s.d, r: s.r, t: s.t }, true)}>
+        <b>{s.t}</b><div className="m">{s.u} · {s.d || "no device"} · {s.r}</div><div style={{ marginTop: 8 }}><span className="m">Expect: </span><Pill d={s.e} /></div></button>)}</div></div>}
+    <div className="card" style={{ marginBottom: 14 }}><h2>Check my own access <span className="m">(as {me.name}, {me.mfa ? "MFA verified" : "MFA not verified"})</span></h2>
+      <div className="tools">
+        <select value={dev} onChange={(e) => setDev(e.target.value)} aria-label="Device">{["", "d-aman", "d-priya", "d-root", "d-ravi", "d-neha"].map((x) => <option key={x} value={x}>{x || "(no device)"}</option>)}</select>
+        <select value={res} onChange={(e) => setRes(e.target.value)} aria-label="Resource">{["hr_db", "source_code", "wiki"].map((x) => <option key={x}>{x}</option>)}</select>
+        <button className="btn" disabled={busy} onClick={() => void run({ u: me.id, d: dev, r: res }, false)}>Request access</button></div></div>
     {runs.length > 1 && <div className="card"><h2>Recent runs</h2>{runs.slice(1).map((x, i) => <div key={i} style={{ padding: "6px 0", borderTop: "1px solid var(--bd)" }}>{x.out ? <Pill d={x.out.decision} /> : "error"} {x.t ?? `${x.u} → ${x.r}`} <span className="m">{x.out?.reason}</span></div>)}</div>}
   </>);
 }
