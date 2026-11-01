@@ -1,10 +1,12 @@
+![ZeroGuard](docs/banner.jpg)
+
 # ZeroGuard — Zero Trust Access Policy Tracker
 
 ZeroGuard decides whether a user may access a resource using **identity status, role, MFA state and device posture**, enforces that decision at the resource, and records every decision with the policy ID and version that produced it. Policies are written in **Rego** and evaluated by **Open Policy Agent (OPA)**.
 
-> Portfolio prototype, not a production-certified system. Device posture is **simulated**, and identity is a **demo header** (see [Known limitations](#known-limitations)).
+> Portfolio prototype, not a production-certified system. Device posture is **simulated**, and login uses seeded demo accounts with one shared password (see [Known limitations](#known-limitations)).
 
-**Live demo:** `<your-render-url>` (free tier: first load after idle takes ~1 minute; data resets on restart) · **Demo walkthrough:** [docs/demo-script.md](docs/demo-script.md) · **Threat model:** [docs/threat-model.md](docs/threat-model.md)
+**Live demo:** `<your-render-url>` (free tier: first load after idle takes ~1 minute) · **Demo walkthrough:** [docs/demo-script.md](docs/demo-script.md) · **Threat model:** [docs/threat-model.md](docs/threat-model.md)
 
 ## What it demonstrates
 - **Policy as code:** rules live in `policies/` (Rego + data), separate from application code, with 10 Rego unit tests.
