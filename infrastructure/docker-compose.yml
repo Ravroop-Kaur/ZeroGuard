@@ -1,0 +1,11 @@
+services:
+  opa:
+    image: openpolicyagent/opa:1.4.2     # pin; bump deliberately
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "/policies"]
+    volumes: ["../policies:/policies:ro"]
+    ports: ["127.0.0.1:8181:8181"]       # local only; never expose OPA publicly
+  backend:
+    build: ../backend
+    environment: { OPA_URL: "http://opa:8181" }
+    ports: ["8000:8000"]
+    depends_on: [opa]

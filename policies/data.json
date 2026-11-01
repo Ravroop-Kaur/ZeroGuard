@@ -1,0 +1,111 @@
+{
+  "zeroguard": {
+    "policies": [
+      {
+        "id": "P001",
+        "name": "HR may use HR database with MFA and compliant device",
+        "effect": "ALLOW",
+        "roles": [
+          "hr"
+        ],
+        "resources": [
+          "hr_db"
+        ],
+        "mfa_verified": true,
+        "device_compliant": true,
+        "min_sensitivity": null,
+        "status": "active",
+        "version": 1
+      },
+      {
+        "id": "P002",
+        "name": "Developers cannot access HR database",
+        "effect": "DENY",
+        "roles": [
+          "developer"
+        ],
+        "resources": [
+          "hr_db"
+        ],
+        "mfa_verified": null,
+        "device_compliant": null,
+        "min_sensitivity": null,
+        "status": "active",
+        "version": 1
+      },
+      {
+        "id": "P003",
+        "name": "Sensitive data requires MFA",
+        "effect": "STEP_UP_AUTHENTICATION",
+        "roles": [],
+        "resources": [],
+        "mfa_verified": false,
+        "device_compliant": null,
+        "min_sensitivity": 3,
+        "status": "active",
+        "version": 1
+      },
+      {
+        "id": "P004",
+        "name": "Admin on non-compliant device is denied",
+        "effect": "DENY",
+        "roles": [
+          "admin"
+        ],
+        "resources": [],
+        "mfa_verified": null,
+        "device_compliant": false,
+        "min_sensitivity": 2,
+        "status": "active",
+        "version": 1
+      },
+      {
+        "id": "P005",
+        "name": "Interns cannot access source code",
+        "effect": "DENY",
+        "roles": [
+          "intern"
+        ],
+        "resources": [
+          "source_code"
+        ],
+        "mfa_verified": null,
+        "device_compliant": null,
+        "min_sensitivity": null,
+        "status": "active",
+        "version": 1
+      },
+      {
+        "id": "P006",
+        "name": "Devs/admins may use source code with MFA and compliant device",
+        "effect": "ALLOW",
+        "roles": [
+          "developer",
+          "admin"
+        ],
+        "resources": [
+          "source_code"
+        ],
+        "mfa_verified": true,
+        "device_compliant": true,
+        "min_sensitivity": null,
+        "status": "active",
+        "version": 1
+      },
+      {
+        "id": "P007",
+        "name": "Anyone may read the wiki",
+        "effect": "ALLOW",
+        "roles": [],
+        "resources": [
+          "wiki"
+        ],
+        "mfa_verified": null,
+        "device_compliant": null,
+        "min_sensitivity": null,
+        "status": "active",
+        "version": 1
+      }
+    ]
+  }
+}

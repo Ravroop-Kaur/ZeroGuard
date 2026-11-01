@@ -1,0 +1,51 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ZeroGuard Dashboard</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#1b1f24;--mut:#667;--bd:#dde1e6;--ok:#1a7f4b;--no:#c62828;--st:#b26a00;--ac:#2456d6}
+@media(prefers-color-scheme:dark){:root{--bg:#14171b;--card:#1d2127;--tx:#e8ebef;--mut:#9aa3ad;--bd:#2f353d;--ok:#4cc38a;--no:#ff7b72;--st:#e3b341;--ac:#6e9bff}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px system-ui,sans-serif;padding:16px;max-width:1100px;margin-inline:auto}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}h1{font-size:20px;margin:0}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-top:14px}h2{font-size:15px;margin:0 0 10px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}.n{font-size:28px;font-weight:600}.m{color:var(--mut)}
+select,input,button{font:inherit;padding:6px 8px;border:1px solid var(--bd);border-radius:6px;background:var(--card);color:var(--tx)}button{cursor:pointer;background:var(--ac);color:#fff;border:0}
+.w{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:640px}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--bd)}th{color:var(--mut);font-weight:500}
+.ALLOW{color:var(--ok)}.DENY{color:var(--no)}.STEP_UP_AUTHENTICATION{color:var(--st)}b.t{font-weight:600}
+.bar{height:10px;border-radius:5px;background:currentColor;display:inline-block;vertical-align:middle}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+#err{color:var(--no);margin-top:10px}
+</style></head><body>
+<header><h1>ZeroGuard &mdash; Access Policy Tracker</h1>
+<div class="row"><label>Viewing as <select id="admin"><option>root</option><option>aman</option></select></label><input id="key" type="password" placeholder="Admin key (deployed)" size="16"><button onclick="load()">Refresh</button></div></header>
+<div id="err"></div>
+<div class="grid" id="cards"></div>
+<div class="card"><h2>Decisions</h2><div id="bars"></div></div>
+<div class="grid">
+<div class="card"><h2>Repeated denials (possible violations)</h2><div id="viol" class="m">None</div></div>
+<div class="card"><h2>Audit log integrity</h2><div id="integ" class="m">&hellip;</div></div></div>
+<div class="card"><h2>Request simulator</h2><div class="row">
+<select id="su"><option>aman</option><option>priya</option><option>root</option><option>ravi</option><option>sam</option><option>neha</option></select>
+<select id="sd"><option value="">(no device)</option><option>d-aman</option><option>d-priya</option><option>d-root</option><option>d-ravi</option><option>d-neha</option></select>
+<select id="sr"><option>hr_db</option><option>source_code</option><option>wiki</option></select>
+<button onclick="sim()">Evaluate</button></div><p id="sres" class="m"></p></div>
+<div class="card"><h2>Policies</h2><div class="w"><table id="pol"></table></div></div>
+<div class="card"><h2>Recent audit events</h2><div class="w"><table id="log"></table></div></div>
+<script>
+const $=s=>document.querySelector(s);
+const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+async function api(p,o={}){const r=await fetch(p,{...o,headers:{"X-User-Id":$("#admin").value,"X-Admin-Key":$("#key").value,...(o.headers||{})}});
+ const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(r.status+": "+(j.detail||"error"));return j}
+async function load(){$("#err").textContent="";
+ try{const [s,a,v,p]=await Promise.all([api("/stats"),api("/audit"),api("/audit/verify"),api("/policies")]);
+  const d=s.by_decision,tot=Object.values(d).reduce((x,y)=>x+y,0);
+  $("#cards").innerHTML=[["Total events",tot],["Allowed",d.ALLOW||0],["Denied",d.DENY||0],["Step-up",d.STEP_UP_AUTHENTICATION||0]]
+   .map(([k,n])=>`<div class="card"><div class="m">${k}</div><div class="n">${n}</div></div>`).join("");
+  $("#bars").innerHTML=["ALLOW","DENY","STEP_UP_AUTHENTICATION"].map(k=>`<div class="${k}"><span style="display:inline-block;width:180px">${k}</span><span class="bar" style="width:${tot?(d[k]||0)/tot*60:0}%"></span> ${d[k]||0}</div>`).join("");
+  $("#viol").innerHTML=s.repeated_denials.length?s.repeated_denials.map(x=>`<div><b class="t">${esc(x.user_id)}</b> &rarr; ${esc(x.resource)}: ${x.n} denials</div>`).join(""):"None";
+  $("#integ").innerHTML=v.intact?'<b class="ALLOW">Intact</b> &mdash; hash chain verified':`<b class="DENY">Tampering detected at event #${v.broken_at}</b>`;
+  $("#pol").innerHTML="<tr><th>ID</th><th>Name</th><th>Effect</th><th>Roles</th><th>Resources</th><th>Status</th><th>v</th></tr>"+p.map(x=>`<tr><td>${esc(x.id)}</td><td>${esc(x.name)}</td><td class="${esc(x.effect)}">${esc(x.effect)}</td><td>${esc(x.roles.join(", ")||"any")}</td><td>${esc(x.resources.join(", ")||"any")}</td><td>${esc(x.status)}</td><td>${x.version}</td></tr>`).join("");
+  $("#log").innerHTML="<tr><th>#</th><th>Time (UTC)</th><th>User</th><th>Resource</th><th>Decision</th><th>Reason</th><th>Policy</th></tr>"+a.slice(0,50).map(x=>`<tr><td>${x.id}</td><td>${esc(x.ts.slice(0,19).replace("T"," "))}</td><td>${esc(x.user_id)}</td><td>${esc(x.resource)}</td><td class="${esc(x.decision)}">${esc(x.decision)}</td><td>${esc(x.reason)}</td><td>${esc(x.policy_id||"-")}${x.policy_version?" v"+x.policy_version:""}</td></tr>`).join("");
+ }catch(e){$("#err").textContent="Could not load (admin only): "+e.message}}
+async function sim(){const h={"X-User-Id":$("#su").value};if($("#sd").value)h["X-Device-Id"]=$("#sd").value;
+ try{const r=await api("/access-request?resource="+$("#sr").value,{method:"POST",headers:h});
+  $("#sres").innerHTML=`<b class="${esc(r.decision)}">${esc(r.decision)}</b> &mdash; ${esc(r.reason)} (${esc(r.policy_id||"default")})`;load()}catch(e){$("#sres").textContent=e.message}}
+$("#admin").onchange=load;$("#key").onchange=load;load();
+</script></body></html>
