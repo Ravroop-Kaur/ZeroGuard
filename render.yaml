@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: zeroguard
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: ADMIN_KEY
+        generateValue: true
