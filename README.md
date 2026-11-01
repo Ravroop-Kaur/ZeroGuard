@@ -4,7 +4,7 @@ ZeroGuard decides whether a user may access a resource using **identity status, 
 
 > Portfolio prototype, not a production-certified system. Device posture is **simulated**, and identity is a **demo header** (see [Known limitations](#known-limitations)).
 
-**Live demo:** `<your-render-url>` (free tier: first load after idle takes ~1 minute; data resets on restart) · **Demo walkthrough:** [docs/demo-script.md](docs/demo-script.md) · **Threat model:** [docs/threat-model.md](docs/threat-model.md)
+**Live demo:** `https://zeroguard-8o7k.onrender.com/` (free tier: first load after idle takes ~1 minute; data resets on restart) · **Demo walkthrough:** [docs/demo-script.md](docs/demo-script.md) · **Threat model:** [docs/threat-model.md](docs/threat-model.md)
 
 ## What it demonstrates
 - **Policy as code:** rules live in `policies/` (Rego + data), separate from application code, with 10 Rego unit tests.
