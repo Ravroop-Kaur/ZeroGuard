@@ -1,146 +1,165 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { Bar, BarChart, CartesianGrid, Cell, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, session, AccessResult, AuditRow, Decision, Policy, Stats } from "./api";
 
-const COLOR: Record<Decision, string> = { ALLOW: "#1a7f4b", DENY: "#c62828", STEP_UP_AUTHENTICATION: "#b26a00" };
-const TABS = ["Overview", "Access monitoring", "Policies", "Simulator"] as const;
-type Tab = (typeof TABS)[number];
-const USERS = ["aman", "priya", "root", "ravi", "sam", "neha"];
-const DEVICES = ["", "d-aman", "d-priya", "d-root", "d-ravi", "d-neha"];
-const RESOURCES = ["hr_db", "source_code", "wiki"];
+const COLOR: Record<Decision, string> = { ALLOW: "#16a34a", DENY: "#dc2626", STEP_UP_AUTHENTICATION: "#d97706" };
+const LABEL: Record<Decision, string> = { ALLOW: "Allowed", DENY: "Denied", STEP_UP_AUTHENTICATION: "Step-up" };
+const KEYS = Object.keys(COLOR) as Decision[];
+const TABS = [["Overview", "📊"], ["Access monitoring", "📜"], ["Policies", "🛡️"], ["Simulator", "🧪"]] as const;
+type Tab = (typeof TABS)[number][0];
+const TITLES: Record<Tab, string> = { Overview: "Security overview", "Access monitoring": "Access monitoring", Policies: "Policies", Simulator: "Request simulator" };
+const SUBS: Record<Tab, string> = { Overview: "What is happening across your protected resources.", "Access monitoring": "Every decision, with the reason and the policy version. Click a row for details.",
+  Policies: "The rules OPA evaluates. Deny always wins.", Simulator: "Try a scenario and watch the decision appear in the audit log." };
+const SCENARIOS = [
+  { u: "priya", d: "d-priya", r: "hr_db", t: "HR opens the HR database", e: "ALLOW" }, { u: "aman", d: "d-aman", r: "hr_db", t: "Developer opens the HR database", e: "DENY" },
+  { u: "neha", d: "d-neha", r: "hr_db", t: "HR user without MFA", e: "STEP_UP_AUTHENTICATION" }, { u: "root", d: "d-root", r: "source_code", t: "Admin on a non-compliant device", e: "DENY" },
+  { u: "ravi", d: "d-ravi", r: "source_code", t: "Intern opens source code", e: "DENY" }, { u: "ravi", d: "d-ravi", r: "wiki", t: "Intern reads the wiki", e: "ALLOW" },
+  { u: "sam", d: "", r: "wiki", t: "Disabled account", e: "DENY" }, { u: "priya", d: "d-aman", r: "hr_db", t: "Using someone else's device", e: "DENY" },
+] as const;
 
+function ago(ts: string) {
+  const s = Math.max(0, (Date.now() - new Date(ts).getTime()) / 1000);
+  return s < 60 ? "just now" : s < 3600 ? `${Math.floor(s / 60)} min ago` : s < 86400 ? `${Math.floor(s / 3600)} h ago` : `${Math.floor(s / 86400)} d ago`;
+}
 function exportCsv(rows: AuditRow[]) {
   const cols = ["id", "ts", "user_id", "resource", "device_id", "decision", "reason", "policy_id", "policy_version"] as const;
-  const cell = (v: unknown) => {
-    const t = String(v ?? "");
-    return `"${(/^[=+\-@]/.test(t) ? "'" + t : t).replace(/"/g, '""')}"`;   // neutralise spreadsheet formulas
-  };
-  const csv = [cols.join(","), ...rows.map((r) => cols.map((c) => cell(r[c])).join(","))].join("\n");
+  const cell = (v: unknown) => { const t = String(v ?? ""); return `"${(/^[=+\-@]/.test(t) ? "'" + t : t).replace(/"/g, '""')}"`; };
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-  a.download = "zeroguard-audit.csv";
-  a.click();
-  URL.revokeObjectURL(a.href);
+  a.href = URL.createObjectURL(new Blob([[cols.join(","), ...rows.map((r) => cols.map((c) => cell(r[c])).join(","))].join("\n")], { type: "text/csv" }));
+  a.download = "zeroguard-audit.csv"; a.click(); URL.revokeObjectURL(a.href);
 }
-
-const Tag = ({ d }: { d: Decision }) => <b style={{ color: COLOR[d] }}>{d}</b>;
+const Pill = ({ d }: { d: Decision }) => <span className={`pill ${d}`}>{LABEL[d]}</span>;
+const Empty = ({ icon, text, children }: { icon: string; text: string; children?: ReactNode }) => <div className="empty"><div className="big">{icon}</div><p>{text}</p>{children}</div>;
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("Overview");
-  const [user, setUser] = useState("root");
-  const [key, setKey] = useState("");
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [rows, setRows] = useState<AuditRow[]>([]);
-  const [pols, setPols] = useState<Policy[]>([]);
-  const [intact, setIntact] = useState<boolean | null>(null);
-  const [err, setErr] = useState("");
+  const [user, setUser] = useState("root"); const [key, setKey] = useState("");
+  const [stats, setStats] = useState<Stats | null>(null); const [rows, setRows] = useState<AuditRow[]>([]);
+  const [pols, setPols] = useState<Policy[]>([]); const [intact, setIntact] = useState<boolean | null>(null);
+  const [err, setErr] = useState(""); const [loading, setLoading] = useState(false); const [auto, setAuto] = useState(false);
+  const [sel, setSel] = useState<AuditRow | null>(null);
 
   const load = useCallback(async () => {
-    session.user = user; session.key = key; setErr("");
+    session.user = user; session.key = key; setErr(""); setLoading(true);
     try {
       const [s, a, p, v] = await Promise.all([api<Stats>("/stats"), api<AuditRow[]>("/audit"), api<Policy[]>("/policies"), api<{ intact: boolean }>("/audit/verify")]);
       setStats(s); setRows(a); setPols(p); setIntact(v.intact);
-    } catch (e) {
-      setErr((e as Error).message); setStats(null); setRows([]); setPols([]); setIntact(null);
-    }
+    } catch (e) { setErr((e as Error).message); setStats(null); setRows([]); setPols([]); setIntact(null); }
+    finally { setLoading(false); }
   }, [user, key]);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (!auto) return; const t = setInterval(() => void load(), 10000); return () => clearInterval(t); }, [auto, load]);
 
+  const locked = err.startsWith("403");
+  const denies = stats?.by_decision.DENY ?? 0;
   return (
-    <div className="wrap">
-      <header>
-        <h1>ZeroGuard <span className="m">Access Policy Tracker</span></h1>
-        <div className="row">
-          <label>Viewing as <select value={user} onChange={(e) => setUser(e.target.value)}>{["root", "aman"].map((u) => <option key={u}>{u}</option>)}</select></label>
-          <input type="password" placeholder="Admin key (deployed)" defaultValue="" onBlur={(e) => setKey(e.target.value)} />
-          <button onClick={() => void load()}>Refresh</button>
+    <div className="app">
+      <aside>
+        <div className="brand"><span className="logo">🛡️</span>ZeroGuard</div>
+        {TABS.map(([t, i]) => <button key={t} className={`side-btn ${t === tab ? "on" : ""}`} onClick={() => setTab(t)}><span>{i}</span>{t}
+          {t === "Access monitoring" && denies > 0 && <span className="cnt">{denies}</span>}</button>)}
+        <p className="note">Never trust, always verify. Every request is checked by policy and recorded.</p>
+      </aside>
+      <main>
+        <div className="top">
+          <div><h1>{TITLES[tab]}</h1><p className="sub">{SUBS[tab]}</p></div>
+          <div className="tools">
+            <label className="sw">Viewing as <select value={user} onChange={(e) => setUser(e.target.value)}><option>root</option><option>aman</option></select></label>
+            <input type="password" placeholder="Admin key" aria-label="Admin key" size={14} onBlur={(e) => setKey(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") setKey(e.currentTarget.value); }} />
+            <label className="sw"><input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />Auto-refresh</label>
+            <button className="btn" disabled={loading} onClick={() => void load()}>{loading ? "Loading…" : "Refresh"}</button>
+          </div>
         </div>
-      </header>
-      <nav>{TABS.map((t) => <button key={t} className={t === tab ? "on" : ""} onClick={() => setTab(t)}>{t}</button>)}</nav>
-      {err && <p className="err">Could not load admin data ({err}). Admin role{" "}and key are enforced on the server.</p>}
-      {tab === "Overview" && <Overview stats={stats} rows={rows} intact={intact} />}
-      {tab === "Access monitoring" && <Monitoring rows={rows} />}
-      {tab === "Policies" && <Policies pols={pols} />}
-      {tab === "Simulator" && <Simulator onDone={() => void load()} />}
+        {tab === "Simulator" ? <Simulator onDone={() => void load()} /> : locked ? (
+          <div className="card lock"><div className="big" style={{ fontSize: 40 }}>🔒</div><h2>Admin access needed</h2>
+            <p className="m">Choose <b>root</b> in “Viewing as”, paste the <b>ADMIN_KEY</b> (Render → your service → Environment) into the key box and press Enter.</p></div>
+        ) : err ? <div className="card"><Empty icon="⚠️" text={`Could not load data (${err}).`} /></div>
+          : !stats ? <div className="card"><Empty icon="⏳" text="Loading…" /></div>
+          : tab === "Overview" ? <Overview stats={stats} rows={rows} intact={intact} go={setTab} />
+          : tab === "Access monitoring" ? <Monitoring rows={rows} onPick={setSel} go={setTab} />
+          : <PolicyList pols={pols} />}
+      </main>
+      {sel && <><div className="veil" onClick={() => setSel(null)} /><div className="drawer" role="dialog" aria-label="Decision details">
+        <div className="top"><h2>Decision #{sel.id}</h2><button className="ghost" onClick={() => setSel(null)}>Close</button></div>
+        <p><Pill d={sel.decision} /></p>
+        <dl><dt>Reason</dt><dd>{sel.reason}</dd><dt>User</dt><dd>{sel.user_id}</dd><dt>Resource</dt><dd>{sel.resource}</dd><dt>Device</dt><dd>{sel.device_id ?? "none"}</dd>
+          <dt>Policy</dt><dd>{sel.policy_id ?? "default deny"}{sel.policy_version ? ` (v${sel.policy_version})` : ""}</dd><dt>Time (UTC)</dt><dd>{sel.ts.slice(0, 19).replace("T", " ")}</dd></dl></div></>}
     </div>
   );
 }
 
-function Overview({ stats, rows, intact }: { stats: Stats | null; rows: AuditRow[]; intact: boolean | null }) {
-  const d = stats?.by_decision ?? {};
-  const total = Object.values(d).reduce((x, y) => x + y, 0);
-  const byDecision = (Object.keys(COLOR) as Decision[]).map((k) => ({ name: k, count: d[k] ?? 0 }));
+function Overview({ stats, rows, intact, go }: { stats: Stats; rows: AuditRow[]; intact: boolean | null; go: (t: Tab) => void }) {
+  const d = stats.by_decision; const total = Object.values(d).reduce((x, y) => x + y, 0);
+  const byDecision = KEYS.map((k) => ({ name: LABEL[k], key: k, count: d[k] ?? 0 }));
   const byResource = useMemo(() => {
     const m: Record<string, Record<string, number>> = {};
     rows.forEach((r) => { (m[r.resource] ??= {})[r.decision] = (m[r.resource][r.decision] ?? 0) + 1; });
     return Object.entries(m).map(([resource, v]) => ({ resource, ...v }));
   }, [rows]);
-  return (
-    <>
-      <div className="grid">
-        {[["Total events", total], ["Allowed", d.ALLOW ?? 0], ["Denied", d.DENY ?? 0], ["Step-up", d.STEP_UP_AUTHENTICATION ?? 0]].map(([k, n]) =>
-          <div className="card" key={k as string}><div className="m">{k}</div><div className="n">{n}</div></div>)}
+  const cards: [string, number, string, string][] = [["Total requests", total, "📈", "#6366f1"], ["Allowed", d.ALLOW ?? 0, "✅", COLOR.ALLOW], ["Denied", d.DENY ?? 0, "⛔", COLOR.DENY], ["Step-up needed", d.STEP_UP_AUTHENTICATION ?? 0, "🔐", COLOR.STEP_UP_AUTHENTICATION]];
+  return (<>
+    <div className="grid">{cards.map(([k, n, i, c]) => <div className="card stat" key={k}><div className="ico" style={{ background: c + "22" }}>{i}</div><div><div className="num">{n}</div><div className="m">{k}</div></div></div>)}</div>
+    {total === 0 ? <div className="card"><Empty icon="🧪" text="No activity yet. Run a few scenarios to see the dashboard come alive."><button className="btn" onClick={() => go("Simulator")}>Open the simulator</button></Empty></div> : <>
+      <div className="grid2">
+        <div className="card"><h2>Decisions</h2><div style={{ height: 230 }}><ResponsiveContainer><BarChart data={byDecision}><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="name" fontSize={12} /><YAxis allowDecimals={false} /><Tooltip />
+          <Bar dataKey="count" radius={[8, 8, 0, 0]}>{byDecision.map((x) => <Cell key={x.key} fill={COLOR[x.key]} />)}</Bar></BarChart></ResponsiveContainer></div></div>
+        <div className="card"><h2>Decisions by resource</h2><div style={{ height: 230 }}><ResponsiveContainer><BarChart data={byResource}><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="resource" fontSize={12} /><YAxis allowDecimals={false} /><Tooltip /><Legend />
+          {KEYS.map((k) => <Bar key={k} name={LABEL[k]} dataKey={k} stackId="a" fill={COLOR[k]} />)}</BarChart></ResponsiveContainer></div></div>
       </div>
       <div className="grid2">
-        <div className="card"><h2>Decisions</h2><div style={{ height: 220 }}><ResponsiveContainer>
-          <BarChart data={byDecision}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" fontSize={11} /><YAxis allowDecimals={false} /><Tooltip />
-            <Bar dataKey="count" fill="#2456d6" /></BarChart></ResponsiveContainer></div></div>
-        <div className="card"><h2>Decisions by resource</h2><div style={{ height: 220 }}><ResponsiveContainer>
-          <BarChart data={byResource}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="resource" fontSize={11} /><YAxis allowDecimals={false} /><Tooltip /><Legend />
-            {(Object.keys(COLOR) as Decision[]).map((k) => <Bar key={k} dataKey={k} stackId="a" fill={COLOR[k]} />)}</BarChart></ResponsiveContainer></div></div>
-      </div>
-      <div className="grid2">
-        <div className="card"><h2>Repeated denials (possible violations)</h2>
-          {stats?.repeated_denials.length ? stats.repeated_denials.map((v) => <div key={v.user_id + v.resource}><b>{v.user_id}</b> &rarr; {v.resource}: {v.n} denials</div>) : <span className="m">None</span>}</div>
-        <div className="card"><h2>Audit log integrity</h2>
-          {intact === null ? <span className="m">Unknown</span> : intact ? <b style={{ color: COLOR.ALLOW }}>Intact &mdash; hash chain verified</b> : <b style={{ color: COLOR.DENY }}>Tampering detected</b>}</div>
-      </div>
-    </>
-  );
+        <div className="card"><h2>⚠️ Repeated denials</h2>{stats.repeated_denials.length ? stats.repeated_denials.map((v) => <div className="alert" key={v.user_id + v.resource}><b>{v.user_id}</b> keeps trying <b>{v.resource}</b><span className="pill DENY" style={{ marginLeft: "auto" }}>{v.n} denials</span></div>) : <p className="m">No repeated denials. Nothing suspicious so far.</p>}</div>
+        <div className="card"><h2>🔗 Audit log integrity</h2>{intact === null ? <p className="m">Unknown</p> : intact ? <p><span className="pill ALLOW">Intact</span> <span className="m">Hash chain verified: no record has been edited.</span></p> : <p><span className="pill DENY">Tampering detected</span></p>}</div>
+      </div></>}
+  </>);
 }
 
-function Monitoring({ rows }: { rows: AuditRow[] }) {
-  const [f, setF] = useState<"ALL" | Decision>("ALL");
-  const [q, setQ] = useState("");
-  const shown = rows.filter((r) => (f === "ALL" || r.decision === f) && (q === "" || `${r.user_id} ${r.resource} ${r.reason}`.toLowerCase().includes(q.toLowerCase())));
-  return (
-    <div className="card">
-      <div className="row">
-        <select value={f} onChange={(e) => setF(e.target.value as "ALL" | Decision)}>{["ALL", ...Object.keys(COLOR)].map((x) => <option key={x}>{x}</option>)}</select>
-        <input placeholder="Search user, resource, reason" value={q} onChange={(e) => setQ(e.target.value)} />
-        <button onClick={() => exportCsv(shown)}>Export CSV</button><span className="m">{shown.length} of {rows.length}</span>
-      </div>
-      <div className="w"><table><thead><tr><th>#</th><th>Time (UTC)</th><th>User</th><th>Resource</th><th>Device</th><th>Decision</th><th>Reason</th><th>Policy</th></tr></thead>
-        <tbody>{shown.map((r) => <tr key={r.id}><td>{r.id}</td><td>{r.ts.slice(0, 19).replace("T", " ")}</td><td>{r.user_id}</td><td>{r.resource}</td><td>{r.device_id ?? "-"}</td>
-          <td><Tag d={r.decision} /></td><td>{r.reason}</td><td>{r.policy_id ?? "-"}{r.policy_version ? ` v${r.policy_version}` : ""}</td></tr>)}</tbody></table></div>
-    </div>
-  );
+function Monitoring({ rows, onPick, go }: { rows: AuditRow[]; onPick: (r: AuditRow) => void; go: (t: Tab) => void }) {
+  const [f, setF] = useState<"ALL" | Decision>("ALL"); const [q, setQ] = useState("");
+  const count = (k: Decision) => rows.filter((r) => r.decision === k).length;
+  const shown = rows.filter((r) => (f === "ALL" || r.decision === f) && `${r.user_id} ${r.resource} ${r.reason}`.toLowerCase().includes(q.toLowerCase()));
+  return (<div className="card">
+    <div className="top" style={{ marginBottom: 10 }}>
+      <div className="chips" style={{ margin: 0 }}>{(["ALL", ...KEYS] as const).map((k) => <button key={k} className={f === k ? "on" : ""} onClick={() => setF(k)}>{k === "ALL" ? `All (${rows.length})` : `${LABEL[k]} (${count(k)})`}</button>)}</div>
+      <div className="tools"><input placeholder="Search user, resource or reason" value={q} onChange={(e) => setQ(e.target.value)} /><button className="ghost" disabled={!shown.length} onClick={() => exportCsv(shown)}>Export CSV</button></div></div>
+    {shown.length === 0 ? <Empty icon="🔎" text={rows.length ? "Nothing matches your filters." : "No events yet."}>{!rows.length && <button className="btn" onClick={() => go("Simulator")}>Run a scenario</button>}</Empty> :
+      <div className="w"><table><thead><tr><th>When</th><th>User</th><th>Resource</th><th>Decision</th><th>Reason</th><th>Policy</th></tr></thead>
+        <tbody>{shown.map((r) => <tr key={r.id} onClick={() => onPick(r)}><td title={r.ts}>{ago(r.ts)}</td><td><b>{r.user_id}</b></td><td>{r.resource}</td><td><Pill d={r.decision} /></td><td>{r.reason}</td><td>{r.policy_id ?? "-"}{r.policy_version ? ` v${r.policy_version}` : ""}</td></tr>)}</tbody></table></div>}
+  </div>);
 }
 
-function Policies({ pols }: { pols: Policy[] }) {
-  return (
-    <div className="card"><h2>Policies</h2><div className="w"><table><thead><tr><th>ID</th><th>Name</th><th>Effect</th><th>Roles</th><th>Resources</th><th>Status</th><th>v</th></tr></thead>
-      <tbody>{pols.map((p) => <tr key={p.id}><td>{p.id}</td><td>{p.name}</td><td><Tag d={p.effect} /></td><td>{p.roles.join(", ") || "any"}</td><td>{p.resources.join(", ") || "any"}</td><td>{p.status}</td><td>{p.version}</td></tr>)}</tbody></table></div></div>
-  );
+function PolicyList({ pols }: { pols: Policy[] }) {
+  if (!pols.length) return <div className="card"><Empty icon="🛡️" text="No policies loaded." /></div>;
+  return <div className="grid2">{pols.map((p) => <div className="card" key={p.id}>
+    <div className="top" style={{ marginBottom: 6 }}><b>{p.id}</b><Pill d={p.effect} /></div><p style={{ margin: "0 0 10px", fontWeight: 600 }}>{p.name}</p>
+    <div className="m">Roles</div>{(p.roles.length ? p.roles : ["any"]).map((x) => <span className="chip" key={x}>{x}</span>)}
+    <div className="m">Resources</div>{(p.resources.length ? p.resources : ["any"]).map((x) => <span className="chip" key={x}>{x}</span>)}
+    <p className="m" style={{ marginBottom: 0 }}>Status: {p.status} · version {p.version}</p></div>)}</div>;
 }
 
+type Run = { u: string; d: string; r: string; t?: string; out?: AccessResult; err?: string };
 function Simulator({ onDone }: { onDone: () => void }) {
+  const [runs, setRuns] = useState<Run[]>([]); const [busy, setBusy] = useState(false);
   const [u, setU] = useState("priya"); const [dev, setDev] = useState("d-priya"); const [res, setRes] = useState("hr_db");
-  const [out, setOut] = useState<AccessResult | null>(null); const [err, setErr] = useState("");
-  const run = async () => {
-    setErr("");
-    try { setOut(await api<AccessResult>(`/access-request?resource=${encodeURIComponent(res)}`, { method: "POST" }, u, dev || undefined)); onDone(); }
-    catch (e) { setOut(null); setErr((e as Error).message); }
+  const run = async (x: Run) => {
+    setBusy(true); let out: Run;
+    try { out = { ...x, out: await api<AccessResult>(`/access-request?resource=${encodeURIComponent(x.r)}`, { method: "POST" }, x.u, x.d || undefined) }; }
+    catch (e) { out = { ...x, err: (e as Error).message }; }
+    setRuns((p) => [out, ...p].slice(0, 6)); setBusy(false); onDone();
   };
-  return (
-    <div className="card"><h2>Request simulator <span className="m">(device posture is simulated)</span></h2>
-      <div className="row">
-        <select value={u} onChange={(e) => setU(e.target.value)}>{USERS.map((x) => <option key={x}>{x}</option>)}</select>
-        <select value={dev} onChange={(e) => setDev(e.target.value)}>{DEVICES.map((x) => <option key={x} value={x}>{x || "(no device)"}</option>)}</select>
-        <select value={res} onChange={(e) => setRes(e.target.value)}>{RESOURCES.map((x) => <option key={x}>{x}</option>)}</select>
-        <button onClick={() => void run()}>Evaluate</button></div>
-      {out && <p><Tag d={out.decision} /> &mdash; {out.reason} ({out.policy_id ?? "default"}{out.policy_version ? ` v${out.policy_version}` : ""})</p>}
-      {err && <p className="err">{err}</p>}
-    </div>
-  );
+  const last = runs[0];
+  return (<>
+    {last && <div className={`card result ${last.out?.decision ?? ""}`} style={{ marginBottom: 14 }}>
+      {last.out ? <><div className="ico" style={{ background: COLOR[last.out.decision] + "22", fontSize: 26 }}>{last.out.decision === "ALLOW" ? "✅" : last.out.decision === "DENY" ? "⛔" : "🔐"}</div>
+        <div><div><Pill d={last.out.decision} /> <b>{last.t ?? `${last.u} → ${last.r}`}</b></div><div className="m">{last.out.reason} · policy {last.out.policy_id ?? "default"}{last.out.policy_version ? ` v${last.out.policy_version}` : ""}</div></div></> : <span>{last.err}</span>}</div>}
+    <div className="card" style={{ marginBottom: 14 }}><h2>One-click scenarios <span className="m">(device posture is simulated)</span></h2>
+      <div className="scen">{SCENARIOS.map((s) => <button key={s.t} className="sc" disabled={busy} onClick={() => void run({ u: s.u, d: s.d, r: s.r, t: s.t })}>
+        <b>{s.t}</b><div className="m">{s.u} · {s.d || "no device"} · {s.r}</div><div style={{ marginTop: 8 }}><span className="m">Expect: </span><Pill d={s.e} /></div></button>)}</div></div>
+    <details className="card" style={{ marginBottom: 14 }}><summary style={{ cursor: "pointer", fontWeight: 600 }}>Custom request</summary>
+      <div className="tools" style={{ marginTop: 12 }}>
+        <select value={u} onChange={(e) => setU(e.target.value)}>{["aman", "priya", "root", "ravi", "sam", "neha"].map((x) => <option key={x}>{x}</option>)}</select>
+        <select value={dev} onChange={(e) => setDev(e.target.value)}>{["", "d-aman", "d-priya", "d-root", "d-ravi", "d-neha"].map((x) => <option key={x} value={x}>{x || "(no device)"}</option>)}</select>
+        <select value={res} onChange={(e) => setRes(e.target.value)}>{["hr_db", "source_code", "wiki"].map((x) => <option key={x}>{x}</option>)}</select>
+        <button className="btn" disabled={busy} onClick={() => void run({ u, d: dev, r: res })}>Evaluate</button></div></details>
+    {runs.length > 1 && <div className="card"><h2>Recent runs</h2>{runs.slice(1).map((x, i) => <div key={i} style={{ padding: "6px 0", borderTop: "1px solid var(--bd)" }}>{x.out ? <Pill d={x.out.decision} /> : "error"} {x.t ?? `${x.u} → ${x.r}`} <span className="m">{x.out?.reason}</span></div>)}</div>}
+  </>);
 }
