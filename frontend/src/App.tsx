@@ -1,11 +1,13 @@
 import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { HeroShield, Icon, IconName, Logo, Wordmark } from "./brand";
 import { api, getToken, login, setToken, stepUp, AccessResult, AuditRow, Decision, Me, Policy, Stats } from "./api";
 
-const COLOR: Record<Decision, string> = { ALLOW: "#16a34a", DENY: "#dc2626", STEP_UP_AUTHENTICATION: "#d97706" };
+const COLOR: Record<Decision, string> = { ALLOW: "#34d399", DENY: "#fb7185", STEP_UP_AUTHENTICATION: "#fbbf24" };
 const LABEL: Record<Decision, string> = { ALLOW: "Allowed", DENY: "Denied", STEP_UP_AUTHENTICATION: "Step-up" };
 const KEYS = Object.keys(COLOR) as Decision[];
-const TABS = [["Overview", "📊"], ["Access monitoring", "📜"], ["Policies", "🛡️"], ["Simulator", "🧪"]] as const;
+const TABS = [["Overview", "grid"], ["Access monitoring", "activity"], ["Policies", "shieldcheck"], ["Simulator", "flask"]] as const;
+const TIP = { contentStyle: { background: "#0b1330", border: "1px solid #2b3a7a", borderRadius: 10, color: "#e8ecf6" }, cursor: { fill: "rgba(99,179,255,.08)" } };
 type Tab = (typeof TABS)[number][0];
 const TITLES: Record<Tab, string> = { Overview: "Security overview", "Access monitoring": "Access monitoring", Policies: "Policies", Simulator: "Request simulator" };
 const SUBS: Record<Tab, string> = { Overview: "What is happening across your protected resources.", "Access monitoring": "Every decision, with the reason and the policy version. Click a row for details.",
@@ -29,7 +31,7 @@ function exportCsv(rows: AuditRow[]) {
   a.download = "zeroguard-audit.csv"; a.click(); URL.revokeObjectURL(a.href);
 }
 const Pill = ({ d }: { d: Decision }) => <span className={`pill ${d}`}>{LABEL[d]}</span>;
-const Empty = ({ icon, text, children }: { icon: string; text: string; children?: ReactNode }) => <div className="empty"><div className="big">{icon}</div><p>{text}</p>{children}</div>;
+const Empty = ({ icon, text, children }: { icon: IconName; text: string; children?: ReactNode }) => <div className="empty"><div className="big"><Icon name={icon} size={30} /></div><p>{text}</p>{children}</div>;
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("Overview");
@@ -58,22 +60,22 @@ export default function App() {
     catch (e) { setMfaMsg((e as Error).message.replace(/^\d+: /, "")); }
   };
 
-  if (booting) return <div className="card lock"><Empty icon="⏳" text="Loading…" /></div>;
+  if (booting) return <div className="card lock"><Empty icon="clock" text="Loading…" /></div>;
   if (!me) return <Login onDone={(t, u) => { setToken(t); setMe(u); }} />;
   const denies = stats?.by_decision.DENY ?? 0;
   return (
     <div className="app">
       <aside>
-        <div className="brand"><span className="logo">🛡️</span>ZeroGuard</div>
-        {TABS.map(([t, i]) => <button key={t} className={`side-btn ${t === tab ? "on" : ""}`} onClick={() => setTab(t)}><span>{i}</span>{t}
+        <div className="brand"><Logo size={38} /><Wordmark /></div>
+        {TABS.map(([t, i]) => <button key={t} className={`side-btn ${t === tab ? "on" : ""}`} onClick={() => setTab(t)}><Icon name={i} size={18} />{t}
           {t === "Access monitoring" && denies > 0 && <span className="cnt">{denies}</span>}</button>)}
-        <p className="note">Never trust, always verify. Every request is checked by policy and recorded.</p>
+        <div className="note"><div className="pr"><Icon name="shieldcheck" size={14} />Never trust</div><div className="pr"><Icon name="idcard" size={14} />Always verify</div><div className="pr"><Icon name="lock" size={14} />Least privilege</div></div>
       </aside>
       <main>
         <div className="top">
           <div><h1>{TITLES[tab]}</h1><p className="sub">{SUBS[tab]}</p></div>
           <div className="tools">
-            <span className="chip" style={{ fontSize: 13, padding: "5px 10px" }}>👤 {me.name} · {me.role}</span>
+            <span className="chip" style={{ fontSize: 13, padding: "5px 10px" }}><Icon name="user" size={14} /> {me.name} · {me.role}</span>
             {me.mfa ? <span className="pill ALLOW">MFA verified</span> : <>
               <span className="pill STEP_UP_AUTHENTICATION">MFA not verified</span>
               <input placeholder="6-digit code" aria-label="MFA code" size={9} value={otp} onChange={(e) => setOtp(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void verify(); }} />
@@ -84,10 +86,10 @@ export default function App() {
           </div>
         </div>
         {tab === "Simulator" ? <Simulator me={me} onDone={() => void load()} /> : !isAdmin ? (
-          <div className="card lock"><div style={{ fontSize: 40 }}>🔒</div><h2>Administrators only</h2>
+          <div className="card lock"><div className="ico big-ico"><Icon name="lock" size={30} /></div><h2>Administrators only</h2>
             <p className="m">You are signed in as <b>{me.name}</b> ({me.role}). Dashboards, audit log and policies are for admins. Use the Simulator to check your own access.</p></div>
-        ) : err ? <div className="card"><Empty icon="⚠️" text={`Could not load data (${err}).`} /></div>
-          : !stats ? <div className="card"><Empty icon="⏳" text="Loading…" /></div>
+        ) : err ? <div className="card"><Empty icon="alert" text={`Could not load data (${err}).`} /></div>
+          : !stats ? <div className="card"><Empty icon="clock" text="Loading…" /></div>
           : tab === "Overview" ? <Overview stats={stats} rows={rows} intact={intact} go={setTab} />
           : tab === "Access monitoring" ? <Monitoring rows={rows} onPick={setSel} go={setTab} />
           : <PolicyList pols={pols} />}
@@ -114,19 +116,28 @@ function Login({ onDone }: { onDone: (token: string, user: Me) => void }) {
     try { const r = await api<{ code: string }>(`/auth/demo-code?username=${encodeURIComponent(u.trim())}`); setHint(`Demo MFA code for ${u}: ${r.code}`); }
     catch { setHint("No demo code: demo mode is off or this user has no MFA enrolled."); }
   };
-  return (<div className="login"><form className="card" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
-    <div className="brand" style={{ color: "var(--tx)", margin: "0 0 4px" }}><span className="logo">🛡️</span>ZeroGuard</div>
-    <p className="m" style={{ marginTop: 0 }}>Sign in. Every request after this is checked against policy.</p>
-    <label htmlFor="u">Username</label><input id="u" list="demo-users" autoComplete="username" value={u} onChange={(e) => setU(e.target.value)} />
-    <datalist id="demo-users">{["root", "priya", "aman", "ravi", "neha", "sam"].map((x) => <option key={x} value={x} />)}</datalist>
-    <label htmlFor="p">Password</label><input id="p" type="password" autoComplete="current-password" value={p} onChange={(e) => setP(e.target.value)} />
-    <label htmlFor="o">MFA code <span className="m">(optional now; you can verify later)</span></label><input id="o" inputMode="numeric" maxLength={6} value={o} onChange={(e) => setO(e.target.value)} />
-    {err && <p style={{ color: "var(--no)" }}>{err}</p>}
-    <button className="btn" style={{ width: "100%", marginTop: 14 }} disabled={busy || !u || !p}>{busy ? "Signing in…" : "Sign in"}</button>
-    <p className="m" style={{ marginBottom: 0 }}>Demo accounts: root (admin), priya (HR), aman (developer), ravi (intern), neha (HR, no MFA). Password: your <b>DEMO_PASSWORD</b> (Render → Environment).
-      {" "}<button type="button" className="ghost" style={{ padding: "2px 8px" }} onClick={() => void demo()}>Show demo MFA code</button></p>
-    {hint && <p className="m"><b>{hint}</b></p>}
-  </form></div>);
+  return (<div className="login">
+    <section className="login-l">
+      <div className="hero-brand"><Logo size={64} /><Wordmark size={46} /></div>
+      <p className="tag">A Zero Trust Cybersecurity Framework</p><div className="beam" />
+      <div className="principles">
+        <span><Icon name="shieldcheck" size={22} />Never Trust</span><span><Icon name="idcard" size={22} />Always Verify</span><span><Icon name="lock" size={22} />Least Privilege</span>
+      </div>
+      <form className="card glass" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+        <h2>Sign in</h2><p className="m" style={{ marginTop: -6 }}>Every request after this is checked against policy.</p>
+        <label htmlFor="u">Username</label><input id="u" list="demo-users" autoComplete="username" value={u} onChange={(e) => setU(e.target.value)} />
+        <datalist id="demo-users">{["root", "priya", "aman", "ravi", "neha", "sam"].map((x) => <option key={x} value={x} />)}</datalist>
+        <label htmlFor="p">Password</label><input id="p" type="password" autoComplete="current-password" value={p} onChange={(e) => setP(e.target.value)} />
+        <label htmlFor="o">MFA code <span className="m">(optional now; you can verify later)</span></label><input id="o" inputMode="numeric" maxLength={6} value={o} onChange={(e) => setO(e.target.value)} />
+        {err && <p style={{ color: "var(--no)" }}>{err}</p>}
+        <button className="btn" style={{ width: "100%", marginTop: 14 }} disabled={busy || !u || !p}>{busy ? "Signing in…" : "Sign in"}</button>
+        <p className="m" style={{ marginBottom: 0 }}>Demo accounts: root (admin), priya (HR), aman (developer), ravi (intern), neha (HR, no MFA). Password: your <b>DEMO_PASSWORD</b> (Render → Environment).
+          {" "}<button type="button" className="ghost" style={{ padding: "2px 8px" }} onClick={() => void demo()}>Show demo MFA code</button></p>
+        {hint && <p className="m"><b>{hint}</b></p>}
+      </form>
+    </section>
+    <section className="login-r"><HeroShield /></section>
+  </div>);
 }
 
 function Overview({ stats, rows, intact, go }: { stats: Stats; rows: AuditRow[]; intact: boolean | null; go: (t: Tab) => void }) {
@@ -137,19 +148,19 @@ function Overview({ stats, rows, intact, go }: { stats: Stats; rows: AuditRow[];
     rows.forEach((r) => { (m[r.resource] ??= {})[r.decision] = (m[r.resource][r.decision] ?? 0) + 1; });
     return Object.entries(m).map(([resource, v]) => ({ resource, ...v }));
   }, [rows]);
-  const cards: [string, number, string, string][] = [["Total requests", total, "📈", "#6366f1"], ["Allowed", d.ALLOW ?? 0, "✅", COLOR.ALLOW], ["Denied", d.DENY ?? 0, "⛔", COLOR.DENY], ["Step-up needed", d.STEP_UP_AUTHENTICATION ?? 0, "🔐", COLOR.STEP_UP_AUTHENTICATION]];
+  const cards: [string, number, IconName, string][] = [["Total requests", total, "chart", "#60a5fa"], ["Allowed", d.ALLOW ?? 0, "check", COLOR.ALLOW], ["Denied", d.DENY ?? 0, "ban", COLOR.DENY], ["Step-up needed", d.STEP_UP_AUTHENTICATION ?? 0, "key", COLOR.STEP_UP_AUTHENTICATION]];
   return (<>
-    <div className="grid">{cards.map(([k, n, i, c]) => <div className="card stat" key={k}><div className="ico" style={{ background: c + "22" }}>{i}</div><div><div className="num">{n}</div><div className="m">{k}</div></div></div>)}</div>
-    {total === 0 ? <div className="card"><Empty icon="🧪" text="No activity yet. Run a few scenarios to see the dashboard come alive."><button className="btn" onClick={() => go("Simulator")}>Open the simulator</button></Empty></div> : <>
+    <div className="grid">{cards.map(([k, n, i, c]) => <div className="card stat" key={k}><div className="ico" style={{ color: c, borderColor: c + "88", boxShadow: `0 0 18px ${c}55, inset 0 0 12px ${c}22` }}><Icon name={i} size={22} /></div><div><div className="num">{n}</div><div className="m">{k}</div></div></div>)}</div>
+    {total === 0 ? <div className="card"><Empty icon="flask" text="No activity yet. Run a few scenarios to see the dashboard come alive."><button className="btn" onClick={() => go("Simulator")}>Open the simulator</button></Empty></div> : <>
       <div className="grid2">
-        <div className="card"><h2>Decisions</h2><div style={{ height: 230 }}><ResponsiveContainer><BarChart data={byDecision}><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="name" fontSize={12} /><YAxis allowDecimals={false} /><Tooltip />
+        <div className="card"><h2>Decisions</h2><div style={{ height: 230 }}><ResponsiveContainer><BarChart data={byDecision}><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="name" fontSize={12} /><YAxis allowDecimals={false} /><Tooltip {...TIP} />
           <Bar dataKey="count" radius={[8, 8, 0, 0]}>{byDecision.map((x) => <Cell key={x.key} fill={COLOR[x.key]} />)}</Bar></BarChart></ResponsiveContainer></div></div>
-        <div className="card"><h2>Decisions by resource</h2><div style={{ height: 230 }}><ResponsiveContainer><BarChart data={byResource}><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="resource" fontSize={12} /><YAxis allowDecimals={false} /><Tooltip /><Legend />
+        <div className="card"><h2>Decisions by resource</h2><div style={{ height: 230 }}><ResponsiveContainer><BarChart data={byResource}><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="resource" fontSize={12} /><YAxis allowDecimals={false} /><Tooltip {...TIP} /><Legend />
           {KEYS.map((k) => <Bar key={k} name={LABEL[k]} dataKey={k} stackId="a" fill={COLOR[k]} />)}</BarChart></ResponsiveContainer></div></div>
       </div>
       <div className="grid2">
-        <div className="card"><h2>⚠️ Repeated denials</h2>{stats.repeated_denials.length ? stats.repeated_denials.map((v) => <div className="alert" key={v.user_id + v.resource}><b>{v.user_id}</b> keeps trying <b>{v.resource}</b><span className="pill DENY" style={{ marginLeft: "auto" }}>{v.n} denials</span></div>) : <p className="m">No repeated denials. Nothing suspicious so far.</p>}</div>
-        <div className="card"><h2>🔗 Audit log integrity</h2>{intact === null ? <p className="m">Unknown</p> : intact ? <p><span className="pill ALLOW">Intact</span> <span className="m">Hash chain verified: no record has been edited.</span></p> : <p><span className="pill DENY">Tampering detected</span></p>}</div>
+        <div className="card"><h2><span className="h2i"><Icon name="alert" size={16} /></span> Repeated denials</h2>{stats.repeated_denials.length ? stats.repeated_denials.map((v) => <div className="alert" key={v.user_id + v.resource}><b>{v.user_id}</b> keeps trying <b>{v.resource}</b><span className="pill DENY" style={{ marginLeft: "auto" }}>{v.n} denials</span></div>) : <p className="m">No repeated denials. Nothing suspicious so far.</p>}</div>
+        <div className="card"><h2><span className="h2i" style={{ color: "var(--cy)" }}><Icon name="shieldcheck" size={16} /></span> Audit log integrity</h2>{intact === null ? <p className="m">Unknown</p> : intact ? <p><span className="pill ALLOW">Intact</span> <span className="m">Hash chain verified: no record has been edited.</span></p> : <p><span className="pill DENY">Tampering detected</span></p>}</div>
       </div></>}
   </>);
 }
@@ -162,14 +173,14 @@ function Monitoring({ rows, onPick, go }: { rows: AuditRow[]; onPick: (r: AuditR
     <div className="top" style={{ marginBottom: 10 }}>
       <div className="chips" style={{ margin: 0 }}>{(["ALL", ...KEYS] as const).map((k) => <button key={k} className={f === k ? "on" : ""} onClick={() => setF(k)}>{k === "ALL" ? `All (${rows.length})` : `${LABEL[k]} (${count(k)})`}</button>)}</div>
       <div className="tools"><input placeholder="Search user, resource or reason" value={q} onChange={(e) => setQ(e.target.value)} /><button className="ghost" disabled={!shown.length} onClick={() => exportCsv(shown)}>Export CSV</button></div></div>
-    {shown.length === 0 ? <Empty icon="🔎" text={rows.length ? "Nothing matches your filters." : "No events yet."}>{!rows.length && <button className="btn" onClick={() => go("Simulator")}>Run a scenario</button>}</Empty> :
+    {shown.length === 0 ? <Empty icon="search" text={rows.length ? "Nothing matches your filters." : "No events yet."}>{!rows.length && <button className="btn" onClick={() => go("Simulator")}>Run a scenario</button>}</Empty> :
       <div className="w"><table><thead><tr><th>When</th><th>User</th><th>Resource</th><th>Decision</th><th>Reason</th><th>Policy</th></tr></thead>
         <tbody>{shown.map((r) => <tr key={r.id} onClick={() => onPick(r)}><td title={r.ts}>{ago(r.ts)}</td><td><b>{r.user_id}</b></td><td>{r.resource}</td><td><Pill d={r.decision} /></td><td>{r.reason}</td><td>{r.policy_id ?? "-"}{r.policy_version ? ` v${r.policy_version}` : ""}</td></tr>)}</tbody></table></div>}
   </div>);
 }
 
 function PolicyList({ pols }: { pols: Policy[] }) {
-  if (!pols.length) return <div className="card"><Empty icon="🛡️" text="No policies loaded." /></div>;
+  if (!pols.length) return <div className="card"><Empty icon="shield" text="No policies loaded." /></div>;
   return <div className="grid2">{pols.map((p) => <div className="card" key={p.id}>
     <div className="top" style={{ marginBottom: 6 }}><b>{p.id}</b><Pill d={p.effect} /></div><p style={{ margin: "0 0 10px", fontWeight: 600 }}>{p.name}</p>
     <div className="m">Roles</div>{(p.roles.length ? p.roles : ["any"]).map((x) => <span className="chip" key={x}>{x}</span>)}
@@ -192,7 +203,7 @@ function Simulator({ me, onDone }: { me: Me; onDone: () => void }) {
   const last = runs[0];
   return (<>
     {last && <div className={`card result ${last.out?.decision ?? ""}`} style={{ marginBottom: 14 }}>
-      {last.out ? <><div className="ico" style={{ background: COLOR[last.out.decision] + "22", fontSize: 26 }}>{last.out.decision === "ALLOW" ? "✅" : last.out.decision === "DENY" ? "⛔" : "🔐"}</div>
+      {last.out ? <><div className="ico" style={{ color: COLOR[last.out.decision], borderColor: COLOR[last.out.decision] + "88", boxShadow: `0 0 22px ${COLOR[last.out.decision]}66` }}><Icon name={last.out.decision === "ALLOW" ? "check" : last.out.decision === "DENY" ? "ban" : "key"} size={26} /></div>
         <div><div><Pill d={last.out.decision} /> <b>{last.t ?? `${last.u} → ${last.r}`}</b></div><div className="m">{last.out.reason} · policy {last.out.policy_id ?? "default"}{last.out.policy_version ? ` v${last.out.policy_version}` : ""}</div></div></> : <span>{last.err}</span>}</div>}
     {isAdmin && <div className="card" style={{ marginBottom: 14 }}><h2>Admin scenarios <span className="m">(evaluated as the named user; device posture is simulated)</span></h2>
       <div className="scen">{SCENARIOS.map((s) => <button key={s.t} className="sc" disabled={busy} onClick={() => void run({ u: s.u, d: s.d, r: s.r, t: s.t }, true)}>
